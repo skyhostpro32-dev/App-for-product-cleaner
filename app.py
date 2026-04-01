@@ -36,7 +36,6 @@ if uploaded_file:
             key="canvas",
         )
 
-    # OPTIONS
     st.subheader("⚙️ Step 2: Choose Enhancements")
 
     white_bg_option = st.checkbox("⚪ Apply White Background")
@@ -44,55 +43,72 @@ if uploaded_file:
     enhance_option = st.checkbox("✨ Enhance Image")
 
     if st.button("🚀 Process Image"):
-        mask = None
 
-        # Get mask from drawing
+        result = img_np.copy()
+
+        # -------------------------------
+        # 🧠 Manual Object Removal
+        # -------------------------------
         if canvas.image_data is not None:
             mask = canvas.image_data[:, :, 3]
             mask = (mask > 0).astype("uint8") * 255
 
-        # Remove object using inpaint
-        if mask is not None:
-            kernel = np.ones((7, 7), np.uint8)
-            mask = cv2.dilate(mask, kernel, iterations=2)
-            result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
-        else:
-            result = img_np.copy()
+            if np.sum(mask) > 0:
+                kernel = np.ones((7, 7), np.uint8)
+                mask = cv2.dilate(mask, kernel, iterations=2)
+                result = cv2.inpaint(result, mask, 3, cv2.INPAINT_TELEA)
 
-        # Convert to PIL
-        result_img = Image.fromarray(result)
-
-        # Apply White Background
+        # -------------------------------
+        # ⚪ Improved White Background
+        # -------------------------------
         if white_bg_option:
             gray = cv2.cvtColor(result, cv2.COLOR_RGB2GRAY)
-            _, thresh = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+
+            edges = cv2.Canny(gray, 50, 150)
+
+            kernel = np.ones((5, 5), np.uint8)
+            edges = cv2.dilate(edges, kernel, iterations=2)
+
+            mask_inv = cv2.bitwise_not(edges)
+            mask_inv = cv2.GaussianBlur(mask_inv, (21, 21), 0)
 
             white_bg = np.ones_like(result) * 255
-            fg = cv2.bitwise_and(result, result, mask=thresh)
-            bg = cv2.bitwise_and(white_bg, white_bg, mask=cv2.bitwise_not(thresh))
-            combined = cv2.add(fg, bg)
 
-            result_img = Image.fromarray(combined)
+            fg = cv2.bitwise_and(result, result, mask=mask_inv)
+            bg = cv2.bitwise_and(white_bg, white_bg, mask=cv2.bitwise_not(mask_inv))
 
-        # Enhance Image
+            result = cv2.add(fg, bg)
+
+        # -------------------------------
+        # ✨ Enhancement
+        # -------------------------------
+        result_img = Image.fromarray(result)
+
         if enhance_option:
-            enhancer = ImageEnhance.Contrast(result_img)
-            result_img = enhancer.enhance(1.3)
+            contrast = ImageEnhance.Contrast(result_img)
+            result_img = contrast.enhance(1.3)
 
             sharp = ImageEnhance.Sharpness(result_img)
             result_img = sharp.enhance(1.5)
 
-        # Add Shadow
+        # -------------------------------
+        # 🌫️ Shadow
+        # -------------------------------
         if shadow_option:
             shadow = np.zeros_like(result) + 50
             shadow = cv2.GaussianBlur(shadow, (51, 51), 0)
-            result_shadow = cv2.addWeighted(result, 1, shadow, 0.3, 0)
+            result_shadow = cv2.addWeighted(np.array(result_img), 1, shadow, 0.3, 0)
             result_img = Image.fromarray(result_shadow)
 
+        # -------------------------------
+        # ✅ Show Result
+        # -------------------------------
         st.subheader("✅ Result")
         st.image(result_img)
 
-        # Download
+        # -------------------------------
+        # 📥 Download
+        # -------------------------------
         buf = io.BytesIO()
         result_img.save(buf, format="PNG")
 
