@@ -1,65 +1,87 @@
-import streamlit as st
-from PIL import Image
-import numpy as np
-import cv2
-import io
+import React, { useRef, useState } from "react";
+import axios from "axios";
 
-st.set_page_config(page_title="AI Click Object Remover", layout="centered")
+function App() {
+  const canvasRef = useRef(null);
+  const [drawing, setDrawing] = useState(false);
+  const [imgFile, setImgFile] = useState(null);
 
-st.title("🧠 AI Click Object Remover (No Canvas)")
+  const handleUpload = (e) => {
+    const file = e.target.files[0];
+    setImgFile(file);
 
-uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
 
-if uploaded_file:
-    image = Image.open(uploaded_file).convert("RGB")
-    img_np = np.array(image)
+    img.onload = () => {
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext("2d");
 
-    st.image(image, caption="Click position to remove object")
+      canvas.width = img.width;
+      canvas.height = img.height;
 
-    x = st.slider("X Position", 0, image.width, image.width // 2)
-    y = st.slider("Y Position", 0, image.height, image.height // 2)
+      ctx.drawImage(img, 0, 0);
+    };
+  };
 
-    tolerance = st.slider("AI Sensitivity", 5, 50, 20)
+  const draw = (e) => {
+    if (!drawing) return;
 
-    if st.button("Remove Object"):
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
 
-        # Convert to BGR (OpenCV)
-        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
 
-        # Create mask
-        mask = np.zeros((image.height + 2, image.width + 2), np.uint8)
+    ctx.fillStyle = "rgba(255,0,0,0.4)";
+    ctx.beginPath();
+    ctx.arc(x, y, 15, 0, 2 * Math.PI);
+    ctx.fill();
+  };
 
-        # Flood fill (AI-like region)
-        _, _, _, rect = cv2.floodFill(
-            img_bgr.copy(),
-            mask,
-            seedPoint=(x, y),
-            newVal=(255, 255, 255),
-            loDiff=(tolerance, tolerance, tolerance),
-            upDiff=(tolerance, tolerance, tolerance),
-        )
+  const removeObject = async () => {
+    const canvas = canvasRef.current;
 
-        # Extract filled region
-        mask = mask[1:-1, 1:-1] * 255
+    const maskBlob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    );
 
-        # Smooth mask
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.dilate(mask, kernel, iterations=2)
+    const formData = new FormData();
+    formData.append("image", imgFile);
+    formData.append("mask", maskBlob);
 
-        # Inpaint
-        result = cv2.inpaint(img_np, mask, 3, cv2.INPAINT_TELEA)
+    const res = await axios.post(
+      "http://localhost:8000/remove-object/",
+      formData,
+      { responseType: "blob" }
+    );
 
-        result_img = Image.fromarray(result)
+    const url = URL.createObjectURL(res.data);
+    window.open(url);
+  };
 
-        st.image(result_img, caption="Result")
+  return (
+    <div style={{ textAlign: "center" }}>
+      <h2>AI Object Remover</h2>
 
-        # Download
-        buf = io.BytesIO()
-        result_img.save(buf, format="PNG")
+      <input type="file" onChange={handleUpload} />
 
-        st.download_button(
-            "Download",
-            data=buf.getvalue(),
-            file_name="removed.png",
-            mime="image/png"
-        )
+      <br /><br />
+
+      <canvas
+        ref={canvasRef}
+        style={{ border: "1px solid black", cursor: "crosshair" }}
+        onMouseDown={() => setDrawing(true)}
+        onMouseUp={() => setDrawing(false)}
+        onMouseMove={draw}
+      />
+
+      <br /><br />
+
+      <button onClick={removeObject}>Remove Object</button>
+    </div>
+  );
+}
+
+export default App;
